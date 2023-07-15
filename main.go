@@ -4,18 +4,33 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
 )
+
+type apiConfig struct {
+	fileserverHits int
+}
 
 func main() {
 	const filepathRoot = "."
 	const port = "8080"
-	cfg := &apiConfig{fileserverHits: 0}
-	mux := http.NewServeMux()
-	handler := http.StripPrefix("/app/", http.FileServer(http.Dir(filepathRoot)))
-	mux.Handle("/app/", cfg.middlewareMetricsInc(handler))
-	mux.HandleFunc("/healthz", serveHealth)
-	mux.HandleFunc("/metrics", cfg.serveMetrics)
-	corsMux := middlewareCors(mux)
+
+	cfg := apiConfig{fileserverHits: 0}
+
+	r := chi.NewRouter()
+
+	router_api := chi.NewRouter()
+	handler := cfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
+	r.Handle("/app", handler)
+	r.Handle("/app/*", handler)
+
+	router_api.Get("/healthz", serveHealth)
+	router_api.Get("/metrics", cfg.serveMetrics)
+
+	r.Mount("/api", router_api)
+
+	corsMux := middlewareCors(r)
 	log.Printf("Serving on port: %s\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, corsMux))
 }
@@ -42,12 +57,9 @@ func serveHealth(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) serveMetrics(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
-	w.WriteHeader(200)
+	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(fmt.Sprintf("Hits: %d", cfg.fileserverHits)))
-}
-
-type apiConfig struct {
-	fileserverHits int
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
